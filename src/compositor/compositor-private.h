@@ -26,6 +26,7 @@ struct _MetaCompositor
 
   ClutterActor          *stage, *window_group, *top_window_group, *feedback_group;
   ClutterActor          *background_actor;
+  ClutterActor          *fps;
   GList                 *windows;
   Window                 output;
 

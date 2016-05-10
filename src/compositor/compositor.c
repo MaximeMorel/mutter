@@ -118,11 +118,31 @@ meta_switch_workspace_completed (MetaCompositor *compositor)
     meta_finish_workspace_switch (compositor);
 }
 
+static void
+prefs_changed_callback (MetaPreference pref,
+                        gpointer       data)
+{
+  MetaCompositor *compositor = data;
+
+  if (pref == META_PREF_SHOW_FPS)
+  {
+    if (meta_prefs_get_show_fps ())
+    {
+      clutter_actor_show(compositor->fps);
+    }
+    else
+    {
+      clutter_actor_hide(compositor->fps);
+    }
+  }
+}
+
 void
 meta_compositor_destroy (MetaCompositor *compositor)
 {
   clutter_threads_remove_repaint_func (compositor->pre_paint_func_id);
   clutter_threads_remove_repaint_func (compositor->post_paint_func_id);
+  meta_prefs_remove_listener (prefs_changed_callback, compositor);
 
   if (compositor->have_x11_sync_object)
     meta_sync_ring_destroy ();
@@ -535,6 +555,24 @@ meta_compositor_manage (MetaCompositor *compositor)
   redirect_windows (display->screen);
 
   compositor->plugin_mgr = meta_plugin_manager_new (compositor);
+
+  {
+    compositor->fps = clutter_text_new_full("Sans 18", "0", CLUTTER_COLOR_Red);
+    //compositor->fps = clutter_actor_new();
+    clutter_actor_set_background_color(compositor->fps, CLUTTER_COLOR_Black);
+    clutter_actor_set_size(compositor->fps, 30, 28);
+    clutter_actor_set_opacity(compositor->fps, 95);
+    clutter_actor_set_position(compositor->fps, 0, 26);
+    if (meta_prefs_get_show_fps())
+    {
+      clutter_actor_show(compositor->fps);
+    }
+    else
+    {
+      clutter_actor_hide(compositor->fps);
+    }
+    clutter_actor_add_child (compositor->stage, compositor->fps);
+  }
 }
 
 void
@@ -1038,12 +1076,33 @@ frame_callback (CoglOnscreen  *onscreen,
     }
 }
 
+int pre_paint_count = 0;
+gint64 start_time = 0;
 static gboolean
 meta_pre_paint_func (gpointer data)
 {
   GList *l;
   MetaWindowActor *top_window;
   MetaCompositor *compositor = data;
+
+  if (meta_prefs_get_show_fps())
+  {
+    char buf[8];
+    gint64 current_time = g_get_monotonic_time();
+    if (current_time - start_time >= 1000000)
+    {
+      snprintf(buf, sizeof(buf), "%d", pre_paint_count);
+      clutter_text_set_text(CLUTTER_TEXT(compositor->fps), buf);
+      //clutter_actor_show(compositor->fps);
+      start_time = current_time;
+      pre_paint_count = 0;
+    }
+    ++pre_paint_count;
+  }
+  else
+  {
+    //clutter_actor_hide(compositor->fps);
+  }
 
   if (compositor->onscreen == NULL)
     {
@@ -1158,6 +1217,9 @@ meta_compositor_new (MetaDisplay *display)
                                            meta_post_paint_func,
                                            compositor,
                                            NULL);
+
+  meta_prefs_add_listener (prefs_changed_callback, compositor);
+
   return compositor;
 }
 
