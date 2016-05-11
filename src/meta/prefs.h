@@ -64,6 +64,7 @@
  * @META_PREF_DRAGGABLE_BORDER_WIDTH: draggable border width
  * @META_PREF_AUTO_MAXIMIZE: auto-maximize
  * @META_PREF_CENTER_NEW_WINDOWS: center new windows
+ * @META_PREF_SHOW_FPS: show compositor fps
  */
 
 /* Keep in sync with GSettings schemas! */
@@ -102,6 +103,7 @@ typedef enum
   META_PREF_AUTO_MAXIMIZE,
   META_PREF_CENTER_NEW_WINDOWS,
   META_PREF_DRAG_THRESHOLD,
+  META_PREF_SHOW_FPS,
 } MetaPreference;
 
 typedef void (* MetaPrefsChangedFunc) (MetaPreference pref,
@@ -140,6 +142,7 @@ gboolean                    meta_prefs_get_edge_tiling        (void);
 gboolean                    meta_prefs_get_auto_maximize      (void);
 gboolean                    meta_prefs_get_center_new_windows (void);
 gboolean                    meta_prefs_get_show_fallback_app_menu (void);
+gboolean                    meta_prefs_get_show_fps (void);
 
 void                        meta_prefs_get_button_layout (MetaButtonLayout *button_layout);
 
