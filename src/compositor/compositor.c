@@ -77,10 +77,17 @@
 #include "meta-sync-ring.h"
 
 #include "backends/x11/meta-backend-x11.h"
+#include "clutter/clutter-mutter.h"
 
 #ifdef HAVE_WAYLAND
 #include "wayland/meta-wayland-private.h"
 #endif
+
+static void
+on_presented (ClutterStage     *stage,
+              CoglFrameEvent    event,
+              ClutterFrameInfo *frame_info,
+              MetaCompositor   *compositor);
 
 static gboolean
 is_modal (MetaDisplay *display)
@@ -365,6 +372,14 @@ meta_begin_modal_for_plugin (MetaCompositor   *compositor,
    */
   MetaDisplay *display = compositor->display;
 
+#ifdef HAVE_WAYLAND
+  if (display->grab_op == META_GRAB_OP_WAYLAND_POPUP)
+    {
+      MetaWaylandSeat *seat = meta_wayland_compositor_get_default ()->seat;
+      meta_wayland_pointer_end_popup_grab (seat->pointer);
+    }
+#endif
+
   if (is_modal (display) || display->grab_op != META_GRAB_OP_NONE)
     return FALSE;
 
@@ -493,6 +508,10 @@ meta_compositor_manage (MetaCompositor *compositor)
   meta_screen_set_cm_selection (display->screen);
 
   compositor->stage = meta_backend_get_stage (backend);
+
+  g_signal_connect (compositor->stage, "presented",
+                    G_CALLBACK (on_presented),
+                    compositor);
 
   /* We use connect_after() here to accomodate code in GNOME Shell that,
    * when benchmarking drawing performance, connects to ::after-paint
@@ -1035,17 +1054,16 @@ meta_compositor_sync_window_geometry (MetaCompositor *compositor,
 }
 
 static void
-frame_callback (CoglOnscreen  *onscreen,
-                CoglFrameEvent event,
-                CoglFrameInfo *frame_info,
-                void          *user_data)
+on_presented (ClutterStage     *stage,
+              CoglFrameEvent    event,
+              ClutterFrameInfo *frame_info,
+              MetaCompositor   *compositor)
 {
-  MetaCompositor *compositor = user_data;
   GList *l;
 
   if (event == COGL_FRAME_EVENT_COMPLETE)
     {
-      gint64 presentation_time_cogl = cogl_frame_info_get_presentation_time (frame_info);
+      gint64 presentation_time_cogl = frame_info->presentation_time;
       gint64 presentation_time;
 
       if (presentation_time_cogl != 0)
@@ -1059,8 +1077,7 @@ frame_callback (CoglOnscreen  *onscreen,
            * is fairly fast, so calling it twice and subtracting to get a
            * nearly-zero number is acceptable, if a litle ugly.
            */
-          CoglContext *context = cogl_framebuffer_get_context (COGL_FRAMEBUFFER (onscreen));
-          gint64 current_cogl_time = cogl_get_clock_time (context);
+          gint64 current_cogl_time = cogl_get_clock_time (compositor->context);
           gint64 current_monotonic_time = g_get_monotonic_time ();
 
           presentation_time =
@@ -1103,15 +1120,6 @@ meta_pre_paint_func (gpointer data)
   {
     //clutter_actor_hide(compositor->fps);
   }
-
-  if (compositor->onscreen == NULL)
-    {
-      compositor->onscreen = COGL_ONSCREEN (cogl_get_draw_framebuffer ());
-      compositor->frame_closure = cogl_onscreen_add_frame_callback (compositor->onscreen,
-                                                                    frame_callback,
-                                                                    compositor,
-                                                                    NULL);
-    }
 
   if (compositor->windows == NULL)
     return TRUE;
@@ -1164,6 +1172,7 @@ static gboolean
 meta_post_paint_func (gpointer data)
 {
   MetaCompositor *compositor = data;
+  CoglGraphicsResetStatus status;
 
   if (compositor->frame_has_updated_xsurfaces)
     {
@@ -1171,6 +1180,29 @@ meta_post_paint_func (gpointer data)
         compositor->have_x11_sync_object = meta_sync_ring_after_frame ();
 
       compositor->frame_has_updated_xsurfaces = FALSE;
+    }
+
+  status = cogl_get_graphics_reset_status (compositor->context);
+  switch (status)
+    {
+    case COGL_GRAPHICS_RESET_STATUS_NO_ERROR:
+      break;
+
+    case COGL_GRAPHICS_RESET_STATUS_PURGED_CONTEXT_RESET:
+      g_signal_emit_by_name (compositor->display, "gl-video-memory-purged");
+      clutter_actor_queue_redraw (CLUTTER_ACTOR (compositor->stage));
+      break;
+
+    default:
+      /* The ARB_robustness spec says that, on error, the application
+         should destroy the old context and create a new one. Since we
+         don't have the necessary plumbing to do this we'll simply
+         restart the process. Obviously we can't do this when we are
+         a wayland compositor but in that case we shouldn't get here
+         since we don't enable robustness in that case. */
+      g_assert (!meta_is_wayland_compositor ());
+      meta_restart (NULL);
+      break;
     }
 
   return TRUE;
@@ -1194,10 +1226,13 @@ on_shadow_factory_changed (MetaShadowFactory *factory,
 MetaCompositor *
 meta_compositor_new (MetaDisplay *display)
 {
-  MetaCompositor        *compositor;
+  MetaBackend *backend = meta_get_backend ();
+  ClutterBackend *clutter_backend = meta_backend_get_clutter_backend (backend);
+  MetaCompositor *compositor;
 
   compositor = g_new0 (MetaCompositor, 1);
   compositor->display = display;
+  compositor->context = clutter_backend->cogl_context;
 
   if (g_getenv("META_DISABLE_MIPMAPS"))
     compositor->no_mipmaps = TRUE;
