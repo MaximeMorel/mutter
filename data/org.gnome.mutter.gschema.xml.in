@@ -104,10 +104,10 @@
 
     <key name="show-fps" type="b">
       <default>false</default>
-      <_summary>Show fps meter</_summary>
-      <_description>
+      <summary>Show fps meter</summary>
+      <description>
         When true, show fps meter on screen when the compositor is running.
-      </_description>
+      </description>
     </key>
 
     <child name="keybindings" schema="org.gnome.mutter.keybindings"/>
